@@ -1,0 +1,4 @@
+.easel
+node_modules
+.next
+seed.py

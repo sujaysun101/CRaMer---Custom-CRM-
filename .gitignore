@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.easel/
+.env
+.env.*
+!.env.example
+# personal contact data — never commit (public repo)
+/data/
+/import/
+*.json.bak
+ACCESS.txt
