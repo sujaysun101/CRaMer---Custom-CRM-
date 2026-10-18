@@ -7,16 +7,17 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   if (dbEnabled()) {
     try {
-      const [contacts, deals, events, queue, messages, meetings, sync] = await Promise.all([
-        selectAll('contacts', 'id,email,name,org,linkedin,status,dnc,source,sentiment,needs_followup,reply_note,next_action,alternate_contact'),
+      const [contacts, deals, events, queue, messages, meetings, sync, notifications] = await Promise.all([
+        selectAll('contacts', 'id,email,name,org,linkedin,status,dnc,source,sentiment,needs_followup,reply_note,next_action,alternate_contact,never_contact'),
         selectAll('deals', 'id,contact_id,title,stage,value'),
         selectAll('events', 'contact_id,channel,kind,date,summary,source_file'),
         selectAll('queue_items'),
         selectAll('messages', 'id,contact_id,direction,kind,date,subject,snippet,url,thread_id,account,sentiment,needs_followup,note,alternate_contact,ooo_type'),
         selectAll('meetings', 'id,title,start_at,end_at,external_attendees,contact_ids,url,meet_link,calendar,description'),
         selectAll('sync_state', 'key,last_synced_at,info', 'key'),
+        selectAll('notifications', 'id,kind,title,body,contact_id,ref,created_at,read_at', 'created_at.desc', 200),
       ]);
-      return Response.json({ source: 'supabase', contacts, deals, events, queue, messages, meetings, sync });
+      return Response.json({ source: 'supabase', contacts, deals, events, queue, messages, meetings, sync, notifications });
     } catch (e) { console.error('supabase read failed', e.message); return Response.json({ error: 'database read failed' }, { status: 502 }); }
   }
   try { return Response.json({ source: 'seed', messages: [], meetings: [], ...JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'seed.json'), 'utf8')) }); }
