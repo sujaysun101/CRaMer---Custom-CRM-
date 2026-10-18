@@ -109,3 +109,4 @@ select{border:1px solid var(--line);border-radius:7px;padding:5px 8px;background
 .grid2>*,.card,.row-m,.content>div{min-width:0}
 td.trunc{display:table-cell;white-space:nowrap;text-overflow:ellipsis}.kc-f .sm,.row-r .sm{white-space:nowrap}
 .facts div{align-items:flex-start}
+.row-t b{flex-shrink:0;max-width:62%}.row-t>.mute{overflow:hidden;text-overflow:ellipsis;min-width:0}.grid2 .why{display:none}
