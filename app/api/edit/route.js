@@ -1,4 +1,4 @@
-import { dbEnabled, patch, insert, select, patchWhere } from '../../../lib/db';
+import { dbEnabled, patch, insert, patchWhere } from '../../../lib/db';
 export const dynamic = 'force-dynamic';
 const STAGES = ['Lead','Contacted','Replied','Meeting','Negotiation','Won','Lost'];
 const QSTATUS = ['Open','Drafted','Waiting','Blocked','Closed','Unknown'];
@@ -25,11 +25,6 @@ export async function POST(req) {
   const s = SPEC[entity];
   if (!s || typeof id !== 'string' || !s.ok(value)) return Response.json({ ok: false, error: 'invalid edit' }, { status: 400 });
   try {
-    // Permanent never-contact people can't be un-flagged or put back into follow-ups.
-    if ((entity === 'contact' && value === false) || (entity === 'followup' && value === true)) {
-      const [c] = await select('contacts', `select=never_contact&id=eq.${encodeURIComponent(id)}`);
-      if (c?.never_contact) return Response.json({ ok: false, error: 'on the permanent never-contact list' }, { status: 409 });
-    }
     const row = await patch(s.table, id, { [s.field]: value });
     if (!row) return Response.json({ ok: false, error: 'not found' }, { status: 404 });
     await insert('edits', { entity: s.log || entity, entity_id: id, field: s.field, new_value: String(value) });

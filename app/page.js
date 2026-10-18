@@ -336,8 +336,7 @@ function Drawer({ c, close, edit, open }) {
       </div>
       <div className="dr-act">
         {c.deal && <select value={c.stage} onChange={e => edit('deal', c.deal.id, e.target.value, 'stage')}>{STAGES.map(s => <option key={s}>{s}</option>)}</select>}
-        {c.never_contact ? <span className="btn danger" title="On the permanent never-contact list: never a recipient, CC, suggestion, follow-up or draft"><I n="ban" s={14} />Never contact (permanent)</span>
-          : <button className={'btn' + (c.dnc ? ' danger' : ' ghost')} onClick={() => edit('contact', c.id, !c.dnc, 'dnc')}><I n="ban" s={14} />{c.dnc ? 'Do not contact' : 'Mark do-not-contact'}</button>}
+        <button className={'btn' + (c.dnc ? ' danger' : ' ghost')} onClick={() => edit('contact', c.id, !c.dnc, 'dnc')}><I n="ban" s={14} />{c.dnc ? 'Do not contact' : 'Mark do-not-contact'}</button>
         {latest && <a className="btn ghost" href={latest.url} target="_blank" rel="noreferrer"><I n="mail" s={14} />Latest thread</a>}
         {c.linkedin && <a className="btn ghost" href={(c.linkedin.startsWith('http') ? '' : 'https://') + c.linkedin} target="_blank" rel="noreferrer"><I n="li" s={14} />Profile</a>}
         {c.email && <button className="btn ghost" onClick={() => navigator.clipboard?.writeText(c.email)}>Copy email</button>}
