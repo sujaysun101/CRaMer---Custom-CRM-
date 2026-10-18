@@ -29,7 +29,7 @@ export default function Home() {
   };
   const A = { M, q: dq, open: setSel, edit, go: setView };
   if (!M) return <div className="boot">{err ? <><b>CRaMer</b><p className="mute">{err}</p></> : <><div className="spin" /><span className="mute">Loading CRaMer…</span></>}</div>;
-  const counts = { followups: M.awaiting.length + M.recap.length + M.autoB.length + M.nudge.length + M.loops.length, leads: M.list.filter(c => c.deal).length, meetings: M.meets.filter(m => m.t > Date.now()).length, replies: M.replies.filter(r => r.kind === 'reply').length, loops: M.queue.filter(x => !['Closed'].includes(x.status)).length };
+  const counts = { followups: M.awaiting.length, leads: M.list.filter(c => c.deal).length, meetings: M.meets.filter(m => m.t > Date.now()).length, replies: M.replies.filter(r => r.kind === 'reply').length, loops: M.queue.filter(x => !['Closed'].includes(x.status)).length };
   const last = (d.sync || []).map(s => ts(s.last_synced_at)).sort().pop();
   const title = NAV.find(n => n[0] === view)[1];
   return <div className="shell">
@@ -108,23 +108,33 @@ function Row({ x, open, extra }) {
 }
 
 function FollowUps({ M, open, q, edit }) {
-  const [tab, setTab] = useState('awaiting');
+  const [tab, setTab] = useState('awaiting'); const [showNudge, setShowNudge] = useState(false);
   const f = xs => xs.filter(x => !q || (x.c && match(x.c, q)) || (x.m && x.m.title.toLowerCase().includes(q)));
   const B = { awaiting: f(M.awaiting), recap: f(M.recap), nudge: f(M.nudge), auto: f(M.autoB), loops: f(M.loops) };
   const [n, more, reset] = useMore(80); useEffect(reset, [tab, q]);
-  const desc = { awaiting: 'Their message is the latest in the thread and it isn’t a “no”. Oldest first.', recap: 'Meetings that ended in the last 30 days with no email from you to the attendees since.', nudge: 'You reached out 5+ business days ago (email or LinkedIn), no reply, no meeting. Oldest first.', auto: 'Out-of-office or left-the-company auto-replies: retry, or reroute to the alternate they named.', loops: 'Asks, commitments and facts flagged by Solidifier (and earlier logs). Overdue first, then asks oldest first, then your commitments.' };
+  const [nn, moreN, resetN] = useMore(80); useEffect(resetN, [showNudge, q]);
+  const desc = { awaiting: 'People who asked you something and are waiting on you: their message is the latest in the thread and it isn’t a “no”. Oldest first.', recap: 'Meetings that ended in the last 30 days with no email from you to the attendees since.', auto: 'Out-of-office or left-the-company auto-replies: retry, or reroute to the alternate they named.' };
+  const loopRow = x => <Row key={x.id} x={{ ...x, msg: { snippet: x.quote ? `“${x.quote}”` : x.summary, url: x.source_link } }} open={open} extra={<>
+    {x.overdue && <span className="pill live">Overdue</span>}{x.due_date && <span className="mute sm">due {x.due_date}</span>}
+    <select value={x.status} onClick={e => e.stopPropagation()} onChange={e => edit('queue_item', x.id, e.target.value, 'qs')}>{QS.map(s => <option key={s}>{s}</option>)}</select></>} />;
+  const personRow = (x, k) => <Row key={x.c.id + k} x={x} open={open} extra={k === 'awaiting' && <button className="btn sm ghost" title="Mark handled" onClick={e => { e.stopPropagation(); edit('followup', x.c.id, false, 'fu'); }}><I n="check" s={13} />Done</button>} />;
   return <div>
-    <Chips v={tab} set={setTab} opts={[['awaiting', 'Awaiting your reply'], ['recap', 'Recap due'], ['nudge', 'Nudge due'], ['auto', 'Auto-replies'], ['loops', 'Flagged loops']]} counts={Object.fromEntries(Object.entries(B).map(([k, v]) => [k, v.length]))} />
+    <Chips v={tab} set={setTab} opts={[['awaiting', 'Awaiting your reply'], ['recap', 'Recap due'], ['auto', 'Auto-replies']]} counts={{ awaiting: B.awaiting.length, recap: B.recap.length, auto: B.auto.length }} />
     <p className="mute desc">{desc[tab]} Nothing is ever sent from CRaMer — links open the thread so you can act.</p>
-    <div className="card list">
-      {tab === 'recap' ? B.recap.slice(0, n).map(x => <MeetRow key={x.m.id} m={x.m} open={open} why={x.why} />)
-        : tab === 'loops' ? B.loops.slice(0, n).map(x => <Row key={x.id} x={{ ...x, msg: { snippet: x.quote ? `“${x.quote}”` : x.summary, url: x.source_link } }} open={open} extra={<>
-            {x.overdue && <span className="pill live">Overdue</span>}{x.due_date && <span className="mute sm">due {x.due_date}</span>}
-            <select value={x.status} onClick={e => e.stopPropagation()} onChange={e => edit('queue_item', x.id, e.target.value, 'qs')}>{QS.map(s => <option key={s}>{s}</option>)}</select></>} />)
-        : B[tab].slice(0, n).map(x => <Row key={x.c.id + tab} x={x} open={open} extra={tab === 'awaiting' && <button className="btn sm ghost" title="Mark handled" onClick={e => { e.stopPropagation(); edit('followup', x.c.id, false, 'fu'); }}><I n="check" s={13} />Done</button>} />)}
-      {!B[tab].length && <Empty t="Nothing here" s="You’re caught up in this bucket." />}
-      <div ref={more} />
-    </div>
+    {tab === 'awaiting' && B.loops.length > 0 && <section className="fu-sec"><h4>Flagged loops <span className="mute">· {B.loops.length} from Solidifier — overdue first, then asks oldest first</span></h4>
+      <div className="card list">{B.loops.map(loopRow)}</div></section>}
+    <section className="fu-sec">{tab === 'awaiting' && B.loops.length > 0 && <h4>Awaiting your reply <span className="mute">· {B.awaiting.length}</span></h4>}
+      <div className="card list">
+        {tab === 'recap' ? B.recap.slice(0, n).map(x => <MeetRow key={x.m.id} m={x.m} open={open} why={x.why} />) : B[tab].slice(0, n).map(x => personRow(x, tab))}
+        {!B[tab].length && <Empty t="Nothing here" s="You’re caught up in this bucket." />}
+        <div ref={more} />
+      </div></section>
+    <section className="fu-sec nudge">
+      <button className="disclose" onClick={() => setShowNudge(v => !v)} aria-expanded={showNudge}>
+        <span className={'chev' + (showNudge ? ' open' : '')}><I n="chev" s={14} /></span><b>Nudge due</b><span className="cn">{B.nudge.length.toLocaleString()}</span>
+        <span className="mute sm">You reached out 5+ business days ago (email or LinkedIn), no reply, no meeting. {showNudge ? 'Click to collapse.' : 'Click to expand.'}</span></button>
+      {showNudge && <div className="card list">{B.nudge.slice(0, nn).map(x => personRow(x, 'nudge'))}{!B.nudge.length && <Empty t="No nudges due" />}<div ref={moreN} /></div>}
+    </section>
   </div>;
 }
 
