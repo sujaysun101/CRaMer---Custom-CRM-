@@ -33,3 +33,4 @@ export const Empty = ({ t, s }) => <div className="empty"><div className="empty-
 export const Chips = ({ opts, v, set, counts }) => <div className="chips">{opts.map(o => { const [k, l] = Array.isArray(o) ? o : [o, o];
   return <button key={k} className={'chip' + (v === k ? ' on' : '')} onClick={() => set(k)}>{l}{counts && counts[k] != null && <span className="cn">{counts[k]}</span>}</button>; })}</div>;
 export const Lead = ({ c, open, sub }) => <button className="lead" onClick={() => open(c.id)}><Avatar c={c} /><span className="lead-t"><b>{who(c)}</b><span className="mute">{sub ?? (c.org || c.email || '')}</span></span></button>;
+export const Pri = ({ p, why }) => p && p.label ? <span className={'pri ' + (p.score >= 7000 ? 'p1' : p.score >= 5500 ? 'p2' : p.score >= 5000 ? 'p3' : 'p4')} title={p.why}>{p.label}{why && <span className="pri-w">{p.why}</span>}</span> : null;

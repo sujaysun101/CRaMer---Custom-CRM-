@@ -24,7 +24,7 @@ export function build(d, ov) {
   const now = Date.now();
   const C = {};
   for (const c of d.contacts) C[c.id] = {
-    ...c, dnc: ov.dnc[c.id] ?? c.dnc, needs_followup: ov.fu[c.id] ?? c.needs_followup, team: isTeam(c.email),
+    ...c, dnc: c.never_contact || (ov.dnc[c.id] ?? c.dnc), needs_followup: !c.never_contact && (ov.fu[c.id] ?? c.needs_followup), team: isTeam(c.email),
     tl: [], meets: [], lastOut: 0, lastIn: 0, lastHuman: 0, lastAuto: null, lastHumanMsg: null, ch: new Set(), deal: null,
   };
   for (const x of d.deals) if (C[x.contact_id]) C[x.contact_id].deal = { ...x, stage: ov.stage[x.id] || x.stage };
@@ -91,12 +91,73 @@ export function build(d, ov) {
       : c.stage === 'Lead' && !c.lastOut ? { k: 'mute', s: 'Send first outreach' }
       : c.lastOut || c.lastIn ? { k: 'mute', s: 'Waiting on them' } : { k: 'mute', s: '—' };
   }
-  // Open loops flagged by Solidifier (queue_items), ordered per follow-up-rules.md
+  // ---- Priority (matches Solidifier's ordering in specs/follow-up-rules.md, then folds in CRM signals) ----
+  // Tiers: stated deadline (overdue first) > inbound asks > meeting in next 7 days > things you owe (recap, your commitments)
+  //        > warm lead gone quiet > reroute after auto-reply > waiting on them > nudge due > record-facts > everything else.
+  // Inside a tier: longest wait first (Solidifier's "oldest first"), then importance (stage, sentiment) as the tie-break.
+  const T = { DUE: [9000, 'Due'], ASK: [8000, 'Asked'], MEET: [7500, 'Meeting'], OWE: [7000, 'You owe'], WARM: [6000, 'Warm'], ALT: [5500, 'Reroute'], THEM: [5200, 'Waiting'], NUDGE: [5000, 'Nudge'], FACT: [3000, 'Record'], NONE: [0, ''] };
+  const W = t => Math.min(days(t), 400); // waiting days; tiers are 1000 apart so a long wait never jumps a tier
+  const DL = /\b(by|before|until|no later than|deadline|due)\b[^.?!\n]{0,25}?\b(today|tonight|tomorrow|eod|cob|end of (?:the )?(?:day|week|month)|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|jan(?:uary)?|feb(?:ruary)?|march|apr(?:il)?|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}\/\d{1,2})\b/i;
+  const IMP = { Negotiation: 3, Meeting: 2.5, Replied: 1.5, Contacted: .5 };
+  const imp = c => Math.min(3.5, (IMP[c.stage] || 0) + (['meeting-request', 'referral'].includes(c.sentiment) ? .5 : 0)) / 4; // < 1 day of waiting
+  const days = t => t ? Math.max(0, (now - t) / DAY) : 0;
+  const mk = (tier, c, sub, why) => ({ score: Math.round((T[tier][0] + sub + (c ? imp(c) : 0)) * 10) / 10, tier, label: T[tier][1], why });
+  const stageWhy = c => (c.stage === 'Meeting' || c.stage === 'Negotiation') ? ` · ${c.stage} stage` : '';
+  const loopPri = q => {
+    const w = days(q.t), due = q.due_date ? ts(q.due_date) : 0;
+    if (due) return mk('DUE', q.c, (due < now ? 500 + Math.min(days(due), 400) : Math.max(0, 400 - (due - now) / DAY)), due < now ? `Overdue since ${q.due_date}` : `Due ${q.due_date}`);
+    const tier = { ask: 'ASK', commitment_by_me: 'OWE', commitment_by_them: 'THEM', record_fact: 'FACT' }[q.type] || 'FACT';
+    return mk(tier, q.c, Math.min(w, 400), `${{ ask: 'Asked you', commitment_by_me: 'You committed', commitment_by_them: 'They committed', record_fact: 'Record' }[q.type] || 'Flagged'} ${ago(q.t)}`);
+  };
   const ORDER = { ask: 1, commitment_by_me: 2, commitment_by_them: 3, record_fact: 4 };
   const loops = (d.queue || []).map(q => ({ ...q, status: ov.qs[q.id] || q.status, c: C[q.contact_id] }))
     .filter(q => q.c && !q.c.dnc && ['Open', 'Blocked', 'Unknown', 'Drafted'].includes(q.status))
     .map(q => ({ ...q, t: ts(q.source_timestamp), overdue: q.due_date && ts(q.due_date) < now, why: q.summary }))
-    .sort((a, b) => (b.overdue - a.overdue) || (ORDER[a.type] - ORDER[b.type]) || (a.t - b.t));
+    .map(q => ({ ...q, pri: loopPri(q) }))
+    .sort((a, b) => (b.pri.score - a.pri.score) || (ORDER[a.type] - ORDER[b.type]) || (a.t - b.t));
+  const loopBy = {}; for (const q of loops) if (!loopBy[q.contact_id] || q.pri.score > loopBy[q.contact_id].pri.score) loopBy[q.contact_id] = q;
+  const autoBy = Object.fromEntries(autoB.map(x => [x.c.id, x]));
+  for (const c of list) {
+    const cands = [];
+    if (c.dnc) { c.pri = mk('NONE', null, -100, 'Do not contact'); continue; }
+    if (loopBy[c.id]) cands.push(loopBy[c.id].pri);
+    if (fuSet.awaiting.has(c.id)) {
+      const t = c.lastHuman || c.lastIn, txt = [c.lastHumanMsg?.snippet, c.next_action, c.reply_note].filter(Boolean).join(' '), m = txt.match(DL);
+      cands.push(m ? mk('DUE', c, W(t), `Stated deadline “${m[0].trim()}” · waiting ${Math.round(days(t))}d`)
+        : mk('ASK', c, W(t), `${c.sentiment === 'meeting-request' ? 'Asked to meet' : /\?/.test(txt) ? 'Asked you a question' : 'Replied'} ${ago(t)} — waiting on you${stageWhy(c)}`));
+    }
+    if (c.nextMeet && c.nextMeet.t - now < 7 * DAY) { const dd = (c.nextMeet.t - now) / DAY; cands.push(mk('MEET', c, (7 - dd) * 50, `Meeting ${dd < 1 ? 'within 24h' : fDate(c.nextMeet.t)} — prep`)); }
+    if (fuSet.recap.has(c.id)) { const r = recap.find(x => x.leads.includes(c)); cands.push(mk('OWE', c, W(r.t), `Recap due — met ${ago(r.t)}`)); }
+    const warmT = Math.max(c.lastHuman, c.lastMeet?.te || 0);
+    if (warmT && !fuSet.awaiting.has(c.id) && !c.nextMeet && !['Won', 'Lost'].includes(c.stage) && c.lastTouch && bizDays(c.lastTouch, now) > 5)
+      cands.push(mk('WARM', c, W(c.lastTouch), `${c.lastMeet && c.lastMeet.te >= c.lastHuman ? 'Met' : 'Replied'} before, quiet ${bizDays(c.lastTouch, now)} business days${stageWhy(c)}`));
+    if (autoBy[c.id]?.kind === 'reroute') cands.push(mk('ALT', c, W(autoBy[c.id].t), autoBy[c.id].why));
+    else if (autoBy[c.id]) cands.push(mk('NUDGE', c, W(autoBy[c.id].t) + 5, autoBy[c.id].why));
+    if (fuSet.nudge.has(c.id)) cands.push(mk('NUDGE', c, W(c.lastOut), `No reply ${bizDays(c.lastOut, now)} business days after your outreach`));
+    c.pri = cands.sort((a, b) => b.score - a.score)[0] || mk('NONE', c, Math.max(0, 400 - days(c.lastTouch)), c.lastTouch ? `Last touch ${ago(c.lastTouch)}` : 'No activity yet');
+  }
+  const byPri = (a, b) => (b.pri.score - a.pri.score) || (a.t - b.t);
+  for (const x of awaiting) x.pri = x.c.pri; awaiting.sort(byPri);
+  for (const x of recap) x.pri = x.leads.map(c => c.pri).sort((a, b) => b.score - a.score)[0]; recap.sort(byPri);
+  for (const x of autoB) x.pri = x.c.pri; autoB.sort(byPri);
+  for (const x of nudge) x.pri = x.c.pri; nudge.sort(byPri);
+  // ---- Dashboard stats ----
+  const ws = weekStart(now), lws = ws - 7 * DAY;
+  const human = (d.messages || []).filter(m => m.direction === 'in' && m.kind === 'reply' && C[m.contact_id] && !C[m.contact_id].team);
+  const inWeek = (t, a) => t >= a && t < a + 7 * DAY;
+  const outBy = {}; for (const m of d.messages || []) if (m.direction === 'out') (outBy[m.contact_id] ||= []).push(ts(m.date));
+  for (const k in outBy) outBy[k].sort((a, b) => a - b);
+  const resp = []; let unanswered = 0;
+  for (const m of human) { const t = ts(m.date); if (now - t > 90 * DAY) continue; const o = (outBy[m.contact_id] || []).find(x => x > t); if (o) resp.push((o - t) / 36e5); else unanswered++; }
+  resp.sort((a, b) => a - b);
+  const stats = {
+    repliesWk: human.filter(m => inWeek(ts(m.date), ws)).length, repliesLwk: human.filter(m => inWeek(ts(m.date), lws)).length,
+    meetsWk: meets.filter(m => m.leads.length && inWeek(m.t, ws)).length, meetsLwk: meets.filter(m => m.leads.length && inWeek(m.t, lws)).length,
+    medianRespH: resp.length ? (resp.length % 2 ? resp[(resp.length - 1) / 2] : (resp[resp.length / 2 - 1] + resp[resp.length / 2]) / 2) : null, respN: resp.length, unanswered,
+    weekMeets: meets.filter(m => m.leads.length && inWeek(m.t, ws)), ws,
+  };
+  const top = list.filter(c => !c.dnc && !c.team && c.pri.score >= 3000).sort((a, b) => b.pri.score - a.pri.score);
+  const activity = list.filter(c => !c.team && !c.never_contact).flatMap(c => c.tl.filter(x => x.type !== 'draft' && x.t && x.t <= now).slice(0, 6).map(x => ({ ...x, c }))).sort((a, b) => b.t - a.t).slice(0, 40);
   const replies = (d.messages || []).filter(m => m.direction === 'in' && C[m.contact_id] && !C[m.contact_id].team).map(m => ({ ...m, t: ts(m.date), c: C[m.contact_id] })).sort((a, b) => b.t - a.t);
-  return { C, list, meets, awaiting, recap, autoB, nudge, loops, replies, queue: (d.queue || []).filter(q => C[q.contact_id]).map(q => ({ ...q, status: ov.qs[q.id] || q.status, c: C[q.contact_id] })) };
+  return { C, list, meets, awaiting, recap, autoB, nudge, loops, replies, stats, top, activity, queue: (d.queue || []).filter(q => C[q.contact_id]).map(q => ({ ...q, status: ov.qs[q.id] || q.status, c: C[q.contact_id] })) };
 }
