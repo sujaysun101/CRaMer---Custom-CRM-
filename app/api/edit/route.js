@@ -6,8 +6,9 @@ const SPEC = {
   deal:       { table: 'deals',       field: 'stage',  ok: v => STAGES.includes(v) },
   contact:    { table: 'contacts',    field: 'dnc',    ok: v => typeof v === 'boolean' },
   queue_item: { table: 'queue_items', field: 'status', ok: v => QSTATUS.includes(v) },
+  followup:   { table: 'contacts',    field: 'needs_followup', ok: v => typeof v === 'boolean', log: 'contact' },
 };
-// POST {entity: 'deal'|'contact'|'queue_item', id, value}
+// POST {entity: 'deal'|'contact'|'queue_item'|'followup', id, value}
 export async function POST(req) {
   const { entity, id, value } = await req.json().catch(() => ({}));
   const s = SPEC[entity];
@@ -16,7 +17,7 @@ export async function POST(req) {
   try {
     const row = await patch(s.table, id, { [s.field]: value });
     if (!row) return Response.json({ ok: false, error: 'not found' }, { status: 404 });
-    await insert('edits', { entity, entity_id: id, field: s.field, new_value: String(value) });
+    await insert('edits', { entity: s.log || entity, entity_id: id, field: s.field, new_value: String(value) });
     return Response.json({ ok: true, persisted: true });
   } catch (e) { console.error('edit failed', e.message); return Response.json({ ok: false, error: 'database write failed' }, { status: 502 }); }
 }

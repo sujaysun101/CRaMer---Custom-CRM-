@@ -7,15 +7,18 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   if (dbEnabled()) {
     try {
-      const [contacts, deals, events, queue] = await Promise.all([
-        selectAll('contacts', 'id,email,name,org,linkedin,status,dnc'),
+      const [contacts, deals, events, queue, messages, meetings, sync] = await Promise.all([
+        selectAll('contacts', 'id,email,name,org,linkedin,status,dnc,source,sentiment,needs_followup,reply_note,next_action,alternate_contact'),
         selectAll('deals', 'id,contact_id,title,stage,value'),
         selectAll('events', 'contact_id,channel,kind,date,summary,source_file'),
         selectAll('queue_items'),
+        selectAll('messages', 'id,contact_id,direction,kind,date,subject,snippet,url,thread_id,account,sentiment,needs_followup,note,alternate_contact,ooo_type'),
+        selectAll('meetings', 'id,title,start_at,end_at,external_attendees,contact_ids,url,meet_link,calendar,description'),
+        selectAll('sync_state', 'key,last_synced_at,info', 'key'),
       ]);
-      return Response.json({ source: 'supabase', contacts, deals, events, queue });
+      return Response.json({ source: 'supabase', contacts, deals, events, queue, messages, meetings, sync });
     } catch (e) { console.error('supabase read failed', e.message); return Response.json({ error: 'database read failed' }, { status: 502 }); }
   }
-  try { return Response.json({ source: 'seed', ...JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'seed.json'), 'utf8')) }); }
-  catch { return Response.json({ source: 'none', contacts: [], deals: [], events: [], queue: [], error: 'no database and seed.json missing' }); }
+  try { return Response.json({ source: 'seed', messages: [], meetings: [], ...JSON.parse(fs.readFileSync(path.join(process.cwd(), 'data', 'seed.json'), 'utf8')) }); }
+  catch { return Response.json({ source: 'none', contacts: [], deals: [], events: [], queue: [], messages: [], meetings: [], error: 'no database and seed.json missing' }); }
 }
