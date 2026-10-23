@@ -155,7 +155,7 @@ export default function Home() {
     pipeline: M.list.length,
     emails: M.allEmails.length,
     autoreplies: M.autoReplies.length,
-    meetings: M.meets.filter(m => m.t > Date.now()).length,
+    meetings: M.meets.length,
     followups: M.awaiting.length,
     loops: M.queue.filter(x => !['Closed'].includes(x.status)).length,
   };
@@ -320,8 +320,8 @@ function Today({ M, open, go }) {
   const leaderboardRows = [
     ['Contacted', 'Contacted', F.contacted, 'Who was contacted'],
     ['Got Back to Us', 'Got Back to Us', F.gotBack, 'Who got back to us'],
-    ['Meetings Set Up', 'Meetings Set Up', F.meetingsSetUp, `${F.meetingsEventsCount} total meetings set up`],
-    ['Follow-Up Meeting(s)', 'Follow-Up Meeting(s)', F.followUpMeetings, 'Whom we set up follow-up meeting(s) with'],
+    ['Meetings Set Up', 'Meetings Set Up', F.meetingsSetUp, `${F.meetingsSetUp} external meetings (${F.meetingsEventsCount} total w/ ${F.internalMeetingsCount} team mtgs · ${F.uniqueLeadsMet} contacts)`],
+    ['Follow-Up Meeting(s)', 'Follow-Up Meeting(s)', F.followUpMeetings, `${F.followUpMeetings} follow-up calendar meetings across ${F.followUpOrgsCount} unique leads/orgs`],
   ];
   const max = Math.max(1, ...leaderboardRows.map(x => x[2]));
   const hour = +new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false });
@@ -330,14 +330,14 @@ function Today({ M, open, go }) {
     <div className="today">
       <div className="hello">
         <h2>Good {hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'}, Sujay</h2>
-        <p className="mute">Zergware & MultiDomain Systems · {F.contacted.toLocaleString()} contacted · {F.gotBack} got back to us · {F.meetingsSetUp} w/ meetings ({F.meetingsEventsCount} total) · {F.followUpMeetings} w/ follow-up meetings</p>
+        <p className="mute">Zergware & MultiDomain Systems (since Feb 2026) · {F.contacted.toLocaleString()} contacted · {F.gotBack} got back to us · {F.meetingsSetUp} external meetings ({F.meetingsEventsCount} total on calendar · {F.uniqueLeadsMet} contacts) · {F.followUpMeetings} follow-up meetings ({F.followUpOrgsCount} unique orgs)</p>
       </div>
       <div className="kpis">
         <Kpi l="Awaiting your reply" v={M.awaiting.length} s="unresponded emails" tone="hot" onClick={() => go('followups')} />
         <Kpi l="Contacted" v={F.contacted.toLocaleString()} s="who was contacted" onClick={() => go('leads')} />
         <Kpi l="Got back to us" v={F.gotBack} s="who got back to us" onClick={() => go('leads')} />
-        <Kpi l="Meetings set up" v={F.meetingsSetUp} s={`${F.meetingsEventsCount} total meetings (${up.length} next 7d)`} onClick={() => go('meetings')} />
-        <Kpi l="Follow-up meeting(s)" v={F.followUpMeetings} s="2+ or demo/next-steps meetings" onClick={() => go('pipeline')} />
+        <Kpi l="Meetings set up" v={F.meetingsSetUp} s={`${F.meetingsEventsCount} total w/ ${F.internalMeetingsCount} team · ${F.uniqueLeadsMet} contacts`} onClick={() => go('meetings')} />
+        <Kpi l="Follow-up meeting(s)" v={F.followUpMeetings} s={`across ${F.followUpOrgsCount} unique leads/orgs (${F.followUpContactsCount} contacts)`} onClick={() => go('meetings')} />
         <Kpi l="Automatic replies" v={M.autoReplies.length} s="filtered into separate tab" onClick={() => go('autoreplies')} />
       </div>
       <div className="grid2">
@@ -357,10 +357,10 @@ function Today({ M, open, go }) {
         </section>
 
         <section className="card">
-          <div className="card-h"><h3>Outreach & meetings leaderboard</h3><button className="link" onClick={() => go('pipeline')}>Board</button></div>
+          <div className="card-h"><h3>Outreach & meetings leaderboard</h3><button className="link" onClick={() => go('meetings')}>Calendar ({F.meetingsEventsCount})</button></div>
           <div className="stagebars">
             {leaderboardRows.map(([s, label, n, sub]) => (
-              <button key={s} className="sb" onClick={() => go('pipeline')} title={sub}>
+              <button key={s} className="sb" onClick={() => (s.includes('Meeting') ? go('meetings') : go('pipeline'))} title={sub}>
                 <span className="sb-l"><span className={'dot st-' + stageSlug(s)} />{label}</span>
                 <span className="sb-t"><span className={'sb-f st-' + stageSlug(s)} style={{ width: (n ? Math.max(4, 100 * n / max) : 0) + '%' }} /></span>
                 <b className="sb-n">{n.toLocaleString()}</b>
@@ -370,8 +370,8 @@ function Today({ M, open, go }) {
           <div className="mute sm" style={{ marginTop: '6px', padding: '0 18px 12px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
             <span>Contacted: <b>{F.contacted.toLocaleString()}</b></span>
             <span>Got back to us: <b>{F.gotBack}</b></span>
-            <span>Meetings set up: <b>{F.meetingsSetUp}</b> ({F.meetingsEventsCount} mtgs)</span>
-            <span>Follow-up meeting(s): <b>{F.followUpMeetings}</b></span>
+            <span>Meetings set up: <b>{F.meetingsSetUp} ext</b> ({F.meetingsEventsCount} total w/ {F.internalMeetingsCount} team · {F.uniqueLeadsMet} contacts)</span>
+            <span>Follow-up meeting(s): <b>{F.followUpMeetings} mtgs</b> ({F.followUpOrgsCount} orgs · {F.followUpContactsCount} contacts)</span>
           </div>
         </section>
 
@@ -969,6 +969,16 @@ function MeetCard({ m, open }) {
       <div className="row-m">
         <div className="row-t">
           <b>{m.title}</b>
+          {m.isFollowUpEvent && (
+            <span className="meet-stat upcoming" title="Follow-up / 2nd+ or demo/next-steps meeting">
+              Follow-Up {m.meetingSeq > 1 ? `#${m.meetingSeq}` : ''}
+            </span>
+          )}
+          {m.isInternal && (
+            <span className="meet-stat completed" title="Internal MultiDomain Systems / Zergware team sync">
+              Internal Team
+            </span>
+          )}
           <span className={'meet-stat ' + m.status}>{m.status.replace('_', ' ')}</span>
           {m.company && <span className="mute">· {m.company}</span>}
         </div>
@@ -976,11 +986,17 @@ function MeetCard({ m, open }) {
           {m.leads.map(c => (
             <Lead key={c.id} c={c} open={open} sub={c.org || ''} />
           ))}
-          {!m.leads.length && <span className="mute sm">No outside attendees linked</span>}
+          {!m.leads.length && (
+            <span className="mute sm">
+              {(m.external_attendees || []).length
+                ? `Team: ${(m.external_attendees || []).join(', ')}`
+                : 'Internal MultiDomain Systems / Zergware session'}
+            </span>
+          )}
         </div>
       </div>
       <div className="row-r">
-        {m.meet_link && (
+        {m.meet_link && m.meet_link.startsWith('http') && (
           <a className="btn sm pri" href={m.meet_link} target="_blank" rel="noreferrer">
             <I n="video" s={13} />{m.isLive ? 'Join Now' : 'Meet Link'}
           </a>
@@ -996,19 +1012,22 @@ function MeetCard({ m, open }) {
 }
 
 function Meetings({ M, open, q }) {
-  const [tab, setTab] = useState('upcoming');
+  const [tab, setTab] = useState('all');
   const now = Date.now();
 
   const ms = useMemo(() => {
     let list = M.meets;
-    if (tab === 'upcoming') list = list.filter(m => m.te >= now);
+    if (tab === 'external') list = list.filter(m => m.isExternal);
+    else if (tab === 'followup') list = list.filter(m => m.isFollowUpEvent);
+    else if (tab === 'internal') list = list.filter(m => m.isInternal);
+    else if (tab === 'upcoming') list = list.filter(m => m.te >= now);
     else if (tab === 'recap') list = list.filter(m => m.needsRecap);
-    else if (tab === 'past') list = list.filter(m => m.te < now);
 
     if (q) {
       list = list.filter(m =>
-        m.title.toLowerCase().includes(q) ||
-        m.company.toLowerCase().includes(q) ||
+        (m.title || '').toLowerCase().includes(q) ||
+        (m.company || '').toLowerCase().includes(q) ||
+        (m.external_attendees || []).some(e => e.toLowerCase().includes(q)) ||
         m.leads.some(c => match(c, q))
       );
     }
@@ -1025,9 +1044,11 @@ function Meetings({ M, open, q }) {
 
   const counts = {
     all: M.meets.length,
+    external: M.meets.filter(m => m.isExternal).length,
+    followup: M.meets.filter(m => m.isFollowUpEvent).length,
+    internal: M.meets.filter(m => m.isInternal).length,
     upcoming: M.meets.filter(m => m.te >= now).length,
     recap: M.meets.filter(m => m.needsRecap).length,
-    past: M.meets.filter(m => m.te < now).length,
   };
 
   return (
@@ -1037,15 +1058,19 @@ function Meetings({ M, open, q }) {
           v={tab}
           set={setTab}
           opts={[
-            ['upcoming', 'Upcoming Meetings'],
+            ['all', 'All Since Feb 2026'],
+            ['external', 'External Client / Investor'],
+            ['followup', 'Follow-Up Meetings'],
+            ['internal', 'Internal Team / Zergware'],
+            ['upcoming', 'Upcoming'],
             ['recap', 'Recaps Due'],
-            ['past', 'Past Meetings'],
-            ['all', 'All Meetings'],
           ]}
           counts={counts}
         />
       </div>
-      <p className="mute desc">Client & partner meetings for Zergware and MultiDomain Systems software. (Academic, mentor, and personal events excluded).</p>
+      <p className="mute desc">
+        Google Calendar meetings for MultiDomain Systems & Zergware since February 2026 ({counts.external} external customer/investor/partner meetings + {counts.internal} internal team meetings = {counts.all} total; {counts.followup} follow-up meetings across {M.funnel.followUpOrgsCount} unique leads/orgs).
+      </p>
 
       {groups.map(g => (
         <section key={g.w} className="week">

@@ -13,7 +13,7 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const FOLLOW_UP_MEET_RX = /follow-?up|next steps|demo|advisory|in-person|second|weekly multidomain/i;
+const FOLLOW_UP_MEET_RX = /follow-?up|next steps|demo|advisory negotiations|partnership exploration|testing account|in-person|nda review|mucker intro/i;
 
 function normalizeData(raw) {
   const rawContacts = Array.isArray(raw.contacts) ? raw.contacts : [];

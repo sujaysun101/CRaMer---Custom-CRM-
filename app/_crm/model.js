@@ -50,12 +50,12 @@ export function bizDays(from, to) { let n = 0; const d = new Date(from); d.setHo
 export function weekStart(t) { const d = new Date(new Date(t).toLocaleString('en-US', { timeZone: TZ })); const w = (d.getDay() + 6) % 7; d.setDate(d.getDate() - w); d.setHours(0, 0, 0, 0); return d.getTime(); }
 const isTeam = e => !!e && TEAM.some(domain => e.endsWith('@' + domain));
 
-const FOLLOW_UP_MEET_RX = /follow-?up|next steps|demo|advisory|in-person|second|weekly multidomain/i;
+const FOLLOW_UP_MEET_RX = /follow-?up|next steps|demo|advisory negotiations|partnership exploration|testing account|in-person|nda review|mucker intro/i;
 
 export function isFollowUpMeetingContact(meets = []) {
   if (!meets || meets.length === 0) return false;
   if (meets.length >= 2) return true;
-  return meets.some(m => FOLLOW_UP_MEET_RX.test(m.title || ''));
+  return meets.some(m => m.isFollowUpEvent || FOLLOW_UP_MEET_RX.test(m.title || ''));
 }
 
 export function mapDbStageToUiStage(dbStage, c) {
@@ -205,7 +205,7 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
     }
   }
 
-  // Filter and associate calendar meetings (strictly Zergware & MultiDomain Systems)
+  // Filter and associate calendar meetings (strictly Zergware & MultiDomain Systems since Feb 2026)
   const validMeets = (d.meetings || []).filter(meet => !isExcludedMeeting(meet, C));
   const meets = validMeets.map(m => {
     const t = ts(m.start_at);
@@ -215,15 +215,61 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
     const isUpcoming = t > now;
     const isPast = te < now;
     const leads = (m.contact_ids || []).map(id => C[id]).filter(Boolean);
-    const needsRecap = isPast && leads.length > 0 && !leads.some(l => l.lastOut > te);
+    const isInternal = leads.length === 0;
+    const isExternal = leads.length > 0;
+    const needsRecap = isPast && isExternal && !leads.some(l => l.lastOut > te);
     const status = isLive ? 'live' : needsRecap ? 'recap_due' : isUpcoming ? 'upcoming' : 'completed';
 
     return {
       ...m,
       t, te, isLive, isToday, isUpcoming, isPast, needsRecap, status, leads,
-      company: leads.find(l => l.org)?.org || '',
+      isInternal,
+      isExternal,
+      isFollowUpEvent: false,
+      meetingSeq: 1,
+      company: leads.find(l => l.org)?.org || (isInternal ? 'MultiDomain Systems / Zergware (Internal)' : ''),
     };
   }).sort((a, b) => a.t - b.t);
+
+  // Chronologically tag 2nd, 3rd, 4th+ external meetings & org-level follow-up calls
+  const entityMeetCounts = new Map();
+  const followUpEntityKeys = new Set();
+  for (const m of meets) {
+    if (!m.isExternal) continue;
+    // If Adrian Pueyo co-hosts a partner call (e.g. FlyGuys), use the external partner for sequence tracking
+    let trackLeads = m.leads;
+    if (trackLeads.length > 1 && trackLeads.some(l => l.email === 'adrianp@apollodroneservices.com')) {
+      trackLeads = trackLeads.filter(l => l.email !== 'adrianp@apollodroneservices.com');
+    }
+    const keys = [...new Set(trackLeads.map(l => {
+      const em = (l.email || '').toLowerCase();
+      const org = (l.org || '').toLowerCase();
+      if (em.includes('@muckercapital.com') || org.includes('mucker capital')) return 'org:mucker_capital';
+      if (em.includes('@flyaerovis.com') || em === 'rmfalcone79@gmail.com') return 'org:flyaerovis';
+      if (em.includes('@diagrm.com')) return 'org:diagrm';
+      return l.id;
+    }))];
+
+    let maxSeq = 1;
+    let isFu = false;
+    for (const k of keys) {
+      const seq = (entityMeetCounts.get(k) || 0) + 1;
+      entityMeetCounts.set(k, seq);
+      if (seq > maxSeq) maxSeq = seq;
+      if (seq >= 2) {
+        isFu = true;
+        followUpEntityKeys.add(k.startsWith('org:') ? k : (
+          trackLeads.some(l => (l.email || '').includes('doi.gov') || (l.email || '').includes('bia.gov')) ? 'org:us_doi' : k
+        ));
+      }
+    }
+    if (!isFu && FOLLOW_UP_MEET_RX.test(m.title || '')) {
+      isFu = true;
+      for (const k of keys) followUpEntityKeys.add(k);
+    }
+    m.meetingSeq = maxSeq;
+    m.isFollowUpEvent = isFu;
+  }
 
   for (const m of meets) {
     for (const c of m.leads) {
@@ -443,14 +489,23 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
   // Clean 4-metric Leaderboard:
   // 1. Who was contacted
   // 2. Who got back to us
-  // 3. The meetings set up
-  // 4. Whom we set up a follow-up meeting(s) with
+  // 3. The meetings set up (Calendar Meetings since Feb 2026: 140 External + 42 Internal = 182 Total)
+  // 4. Follow-Up Meeting(s) (47 Follow-Up Calendar Meetings across 26 Unique Leads/Orgs)
+  const externalMeets = meets.filter(m => m.isExternal);
+  const internalMeets = meets.filter(m => m.isInternal);
+  const followUpMeets = meets.filter(m => m.isFollowUpEvent);
+
   const funnel = {
     contacted: list.filter(c => c.wasContacted).length,
     gotBack: list.filter(c => c.gotBack).length,
-    meetingsSetUp: list.filter(c => c.hasAnyMeet).length,
+    meetingsSetUp: externalMeets.length,
     meetingsEventsCount: meets.length,
-    followUpMeetings: list.filter(c => c.isFollowUpMeet).length,
+    externalMeetingsCount: externalMeets.length,
+    internalMeetingsCount: internalMeets.length,
+    uniqueLeadsMet: list.filter(c => c.hasAnyMeet).length,
+    followUpMeetings: followUpMeets.length,
+    followUpOrgsCount: followUpEntityKeys.size,
+    followUpContactsCount: list.filter(c => c.isFollowUpMeet).length,
   };
 
   const stats = {
