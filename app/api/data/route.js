@@ -33,23 +33,33 @@ function normalizeData(raw) {
   }
 
   // Track which contacts have at least one actual human reply (even if the thread also had an auto-reply earlier)
+  // and which contacts sent an automatic reply
   const humanReplyContactIds = new Set();
+  const autoReplyContactIds = new Set();
   for (const m of rawMessages) {
-    if (m.direction === 'in' && m.kind === 'reply' && !isAutoReplyMessage(m)) {
+    if (isAutoReplyMessage(m)) {
+      autoReplyContactIds.add(m.contact_id);
+    } else if (m.direction === 'in' && m.kind === 'reply') {
       humanReplyContactIds.add(m.contact_id);
     }
   }
   for (const e of rawEvents) {
-    if (e.kind === 'linkedin_message_in' || e.kind === 'reply') {
+    if (e.kind === 'auto_reply') {
+      autoReplyContactIds.add(e.contact_id);
+    } else if (e.kind === 'linkedin_message_in' || e.kind === 'reply') {
       humanReplyContactIds.add(e.contact_id);
     }
   }
+  const meetingAttendeeIds = new Set(rawMeetings.flatMap(m => m.contact_ids || []));
 
-  // 1. Filter out personal, academic/class, mentor, club, and pure auto-reply contacts
+  // 1. Filter out personal, academic/class, mentor, club, and automatic-reply contacts (unless a real person also replied or met)
   const contacts = rawContacts
     .filter(c => {
       const hasDeal = rawDealByContact.has(c.id);
-      const hasHumanReply = humanReplyContactIds.has(c.id);
+      const hasHumanReply = humanReplyContactIds.has(c.id) || meetingAttendeeIds.has(c.id);
+      const hasAutoReply = autoReplyContactIds.has(c.id) || c.source === 'auto_reply' || c.sentiment === 'ooo';
+      // If a contact triggered an automatic reply and NO actual person ever responded, keep them strictly in the Automatic Reply tab
+      if (hasAutoReply && !hasHumanReply) return false;
       return !isExcludedContact(c, { hasDeal, hasHumanReply });
     })
     .map(c => ({

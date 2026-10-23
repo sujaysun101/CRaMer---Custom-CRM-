@@ -82,14 +82,23 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
       .filter(m => m.direction === 'in' && m.kind === 'reply' && !isAutoReplyMessage(m))
       .map(m => m.contact_id)
   );
+  const meetContactIds = new Set((d.meetings || []).flatMap(m => m.contact_ids || []));
+  const autoReplyIds = new Set([
+    ...(d.autoReplies || []).map(m => m.contact_id),
+    ...(d.messages || []).filter(m => isAutoReplyMessage(m)).map(m => m.contact_id),
+  ]);
 
-  // Strictly filter out non-company, personal, academic/NYU classes, mentor contacts, and pure auto-replies
-  const validContacts = (d.contacts || []).filter(c =>
-    !isExcludedContact(c, {
+  // Strictly filter out non-company, personal, academic/NYU classes, mentor contacts, and auto-reply-only contacts
+  const validContacts = (d.contacts || []).filter(c => {
+    const hasHuman = humanReplyIds.has(c.id) || meetContactIds.has(c.id) || Boolean(c.hasHumanReply);
+    if ((autoReplyIds.has(c.id) || c.source === 'auto_reply' || c.sentiment === 'ooo') && !hasHuman) {
+      return false;
+    }
+    return !isExcludedContact(c, {
       hasDeal: dealByContact.has(c.id),
-      hasHumanReply: humanReplyIds.has(c.id) || Boolean(c.hasHumanReply),
-    })
-  );
+      hasHumanReply: hasHuman,
+    });
+  });
 
   for (const c of validContacts) {
     C[c.id] = {
