@@ -174,6 +174,15 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
     return c && !isExcludedMessage(m, c);
   });
 
+  // Track thread_id -> contacts so outbound replies on a thread update lastOut for all thread participants
+  const threadContactSet = new Map();
+  for (const m of validMessages) {
+    if (m.thread_id && C[m.contact_id]) {
+      if (!threadContactSet.has(m.thread_id)) threadContactSet.set(m.thread_id, new Set());
+      threadContactSet.get(m.thread_id).add(m.contact_id);
+    }
+  }
+
   for (const m of validMessages) {
     const c = C[m.contact_id];
     if (!c) continue;
@@ -196,6 +205,11 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
 
     if (m.direction === 'out') {
       c.lastOut = Math.max(c.lastOut, t);
+      if (m.thread_id && threadContactSet.has(m.thread_id)) {
+        for (const cid of threadContactSet.get(m.thread_id)) {
+          if (C[cid]) C[cid].lastOut = Math.max(C[cid].lastOut, t);
+        }
+      }
     } else {
       c.lastIn = Math.max(c.lastIn, t);
       if (m.kind === 'reply') {
@@ -340,9 +354,18 @@ export function build(d, ov = { stage: {}, dnc: {}, fu: {}, qs: {}, nr: {}, li: 
   }
 
   // Follow-ups & Signals:
-  // A lead is awaiting your reply ONLY if they sent a human reply, you haven't replied since (lastOut <= lastHuman), and they didn't decline.
+  // A lead is awaiting your reply ONLY if they sent a human reply, you haven't replied since (lastOut <= lastHuman),
+  // you haven't held a meeting with them after that email, and they didn't decline.
   const awaiting = list
-    .filter(c => !c.dnc && !c.team && c.needs_followup && c.lastHuman > 0 && c.lastOut <= c.lastHuman && c.sentiment !== 'negative')
+    .filter(c => {
+      if (c.dnc || c.team || !c.needs_followup || c.lastHuman <= 0 || c.lastOut > c.lastHuman || c.sentiment === 'negative') {
+        return false;
+      }
+      if (c.lastMeet && c.lastMeet.t > c.lastHuman) {
+        return false;
+      }
+      return true;
+    })
     .map(c => ({
       c,
       t: c.lastHuman || c.lastIn,

@@ -40,6 +40,8 @@ export default function Home() {
   const [toast, setToast] = useState('');
   const [bell, setBell] = useState(false);
   const [theme, setTheme] = useState('dark');
+  const [autoSync, setAutoSync] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -47,6 +49,8 @@ export default function Home() {
       const saved = localStorage.getItem('crm_theme') || 'dark';
       setTheme(saved);
       document.documentElement.setAttribute('data-theme', saved);
+      const savedAuto = localStorage.getItem('crm_autosync');
+      if (savedAuto !== null) setAutoSync(savedAuto !== 'false');
     } catch {
       document.documentElement.setAttribute('data-theme', 'dark');
     }
@@ -63,8 +67,20 @@ export default function Home() {
     });
   }, []);
 
+  const toggleAutoSync = useCallback(() => {
+    setAutoSync(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('crm_autosync', String(next));
+      } catch {}
+      setToast(next ? 'Auto-Update enabled (Daily + 5m live sync)' : 'Auto-Update paused');
+      setTimeout(() => setToast(''), 2400);
+      return next;
+    });
+  }, []);
+
   const load = useCallback(() => {
-    fetch('/api/data')
+    return fetch('/api/data', { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(x => {
         if (x.error && x.source === 'none') setErr(x.error);
@@ -73,8 +89,37 @@ export default function Home() {
       .catch(e => setErr('Could not load data (' + e + ')'));
   }, []);
 
+  const syncNow = useCallback(async (silent = false) => {
+    setSyncing(true);
+    try {
+      const r = await fetch('/api/sync', { method: 'POST', cache: 'no-store' });
+      const res = r.ok ? await r.json() : null;
+      await load();
+      if (!silent) {
+        const reconciledCount = res?.contacts_reconciled || 0;
+        const linkedCount = res?.new_messages_linked || 0;
+        setToast(
+          reconciledCount > 0 || linkedCount > 0
+            ? `Synced — ${reconciledCount} replied lead(s) updated, ${linkedCount} thread email(s) linked`
+            : 'Emails & threads synced and up to date'
+        );
+        setTimeout(() => setToast(''), 3000);
+      }
+    } catch {
+      if (!silent) {
+        setToast('Sync failed');
+        setTimeout(() => setToast(''), 2500);
+      }
+    } finally {
+      setSyncing(false);
+    }
+  }, [load]);
+
   useEffect(() => {
-    load();
+    load().then(() => {
+      // Run a silent background sync on startup to reconcile any replies sent in Gmail
+      syncNow(true);
+    });
     const fromHash = () => {
       const h = location.hash.slice(1);
       if (NAV.some(n => n[0] === h)) setView(h);
@@ -82,7 +127,28 @@ export default function Home() {
     fromHash();
     addEventListener('hashchange', fromHash);
     return () => removeEventListener('hashchange', fromHash);
-  }, [load]);
+  }, [load, syncNow]);
+
+  // Automatic periodic background sync (every 5 minutes + when window regains focus after replying in Gmail)
+  useEffect(() => {
+    if (!autoSync) return;
+    const interval = setInterval(() => {
+      syncNow(true);
+    }, 5 * 60 * 1000);
+
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncNow(true);
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [autoSync, syncNow]);
 
   useEffect(() => {
     history.replaceState(null, '', '#' + view);
@@ -191,8 +257,8 @@ export default function Home() {
         </nav>
         <div className="foot">
           <div><span className={'dot ' + (d.source === 'supabase' ? 'ok' : 'warn')} />{d.source === 'supabase' ? 'Live Supabase' : 'Local Seed Data'}</div>
-          <div className="mute" style={{ fontSize: '11px', marginTop: '2px' }}>Scope: Zergware & MultiDomain Systems</div>
-          <div className="mute">{last ? 'Synced ' + ago(last) : 'Ready'}</div>
+          <div className="mute" style={{ fontSize: '11px', marginTop: '2px' }}>Auto-Update: {autoSync ? 'ON (Daily + 5m Live)' : 'Paused'}</div>
+          <div className="mute">{syncing ? 'Syncing emails…' : last ? 'Synced ' + ago(last) : 'Ready'}</div>
         </div>
       </aside>
 
@@ -206,6 +272,23 @@ export default function Home() {
           </div>
           <button
             className="theme-tog"
+            onClick={toggleAutoSync}
+            title={autoSync ? 'Auto-Update is ON (Daily cron + 5m live sync + tab focus sync). Click to pause.' : 'Auto-Update is paused. Click to enable.'}
+          >
+            <span className={'dot ' + (autoSync ? 'ok' : 'warn')} style={{ marginRight: 2 }} />
+            <span>Auto-Update: {autoSync ? 'ON' : 'OFF'}</span>
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => syncNow(false)}
+            disabled={syncing}
+            title="Sync & reconcile emails and threads now"
+          >
+            <I n="refresh" s={14} />
+            <span>{syncing ? 'Syncing…' : 'Sync Now'}</span>
+          </button>
+          <button
+            className="theme-tog"
             onClick={toggleTheme}
             title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             aria-label="Toggle Dark or Light Mode"
@@ -214,7 +297,6 @@ export default function Home() {
             <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
           </button>
           <Bell d={d} ov={ov} open={bell} setOpen={setBell} edit={edit} openLead={openLeadOrAuto} />
-          <button className="btn ghost" onClick={load} title="Reload data"><I n="refresh" s={15} /></button>
         </header>
 
         <div className="content">
@@ -314,7 +396,7 @@ function Bell({ d, ov, open, setOpen, edit, openLead }) {
   );
 }
 
-function Today({ M, open, go }) {
+function Today({ M, open, go, edit }) {
   const now = Date.now(), S = M.stats, F = M.funnel;
   const up = M.meets.filter(m => m.t > now && m.t < now + 7 * 864e5);
   const leaderboardRows = [
@@ -350,7 +432,18 @@ function Today({ M, open, go }) {
                 <div className="row-t"><b>{who(c)}</b>{c.org && <span className="mute">· {c.org}</span>}<Sent s={c.sentiment} /></div>
                 <div className="row-s">{c.pri.why}</div>
               </div>
-              <div className="row-r"><Pri p={c.pri} /></div>
+              <div className="row-r">
+                <Pri p={c.pri} />
+                {c.needs_followup && (
+                  <button
+                    className="btn sm ghost"
+                    title="Mark as already replied"
+                    onClick={e => { e.stopPropagation(); edit('followup', c.id, false, 'fu'); }}
+                  >
+                    <I n="check" s={13} />Replied
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {!M.top.length && <Empty t="Nothing urgent" />}
@@ -377,7 +470,22 @@ function Today({ M, open, go }) {
 
         <section className="card">
           <div className="card-h"><h3>Awaiting your reply</h3><button className="link" onClick={() => go('followups')}>View all ({M.awaiting.length})</button></div>
-          {M.awaiting.slice(0, 8).map(x => <Row key={x.c.id} x={x} open={open} />)}
+          {M.awaiting.slice(0, 8).map(x => (
+            <Row
+              key={x.c.id}
+              x={x}
+              open={open}
+              extra={
+                <button
+                  className="btn sm ghost"
+                  title="Mark as already replied"
+                  onClick={e => { e.stopPropagation(); edit('followup', x.c.id, false, 'fu'); }}
+                >
+                  <I n="check" s={13} />Replied
+                </button>
+              }
+            />
+          ))}
           {!M.awaiting.length && <Empty t="Inbox zero" s="Nobody is waiting on you." />}
         </section>
 
@@ -1393,6 +1501,14 @@ function Drawer({ c, close, edit, open }) {
               <I n="ext" s={14} />Latest thread
             </a>
           )}
+
+          <button
+            className={'btn ' + (c.needs_followup ? 'pri' : 'ghost')}
+            onClick={() => edit('followup', c.id, !c.needs_followup, 'fu')}
+            title={c.needs_followup ? 'Mark as already replied (remove from Awaiting Your Reply)' : 'Flag as needing a reply'}
+          >
+            <I n="check" s={14} />{c.needs_followup ? 'Mark Replied' : 'Flag for Reply'}
+          </button>
 
           <button className={'btn' + (c.dnc ? ' danger' : ' ghost')} onClick={() => edit('contact', c.id, !c.dnc, 'dnc')}>
             <I n="ban" s={14} />{c.dnc ? 'Do not contact' : 'Mark DNC'}
