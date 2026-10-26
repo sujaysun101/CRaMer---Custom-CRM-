@@ -1,1 +1,9 @@
-module.exports={experimental:{outputFileTracingIncludes:{'/api/data':['./data/seed.json']}}};
+module.exports = {
+  output: 'standalone',
+  experimental: {
+    outputFileTracingIncludes: {
+      '/api/data': ['./data/seed.json'],
+    },
+  },
+};
+

@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # 1. Self-hosted PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: cramer_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cramer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cramer_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-cramer_db}
+    volumes:
+      - cramer_pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cramer} -d ${POSTGRES_DB:-cramer_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. CRaMer Web Application (Next.js Standalone Production Server)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cramer_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cramer}:${POSTGRES_PASSWORD:-cramer_secure_pass_2026}@db:5432/${POSTGRES_DB:-cramer_db}
+      CRM_PASSWORD_HASH: ${CRM_PASSWORD_HASH:-7d92562b5bdc34fdeb08649404642ebb8ef50beae57ce667adf5784e8c9ea96a}
+      CRON_SECRET: ${CRON_SECRET:-cramer_internal_cron_secret_2026}
+    ports:
+      - "${PORT:-3000}:3000"
+
+  # 3. Built-in Daily Sync Worker (Replaces Vercel Cron — runs daily at 00:00 UTC)
+  daily-sync:
+    image: alpine:3.19
+    container_name: cramer_sync_worker
+    restart: unless-stopped
+    depends_on:
+      - app
+    entrypoint: >
+      /bin/sh -c '
+        apk add --no-cache curl tzdata;
+        echo "0 0 * * * curl -s -X POST http://app:3000/api/sync -H \"Authorization: Bearer ${CRON_SECRET:-cramer_internal_cron_secret_2026}\"" > /etc/crontabs/root;
+        echo "[CRaMer Sync Worker] Scheduled daily sync at 00:00 UTC. Starting crond...";
+        crond -f -l 2
+      '
+
+volumes:
+  cramer_pgdata:
+    driver: local
