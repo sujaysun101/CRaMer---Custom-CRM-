@@ -9,7 +9,7 @@ async function main() {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
     console.error('Error: DATABASE_URL environment variable is required.');
-    console.error('Example: DATABASE_URL="postgresql://cramer:password@localhost:5432/cramer_db" node migrate-to-pg.js');
+    console.error('Example: DATABASE_URL="postgresql://cramer@localhost:5433/cramer_db" node migrate-to-pg.js');
     process.exit(1);
   }
 
@@ -50,28 +50,42 @@ async function main() {
 
     console.log('[4/4] Migrating rows into PostgreSQL...');
     for (const [table, rows] of tables) {
-      if (rows.length === 0) continue;
-      const conflictCol = table === 'sync_state' ? 'key' : 'id';
+      if (!rows || rows.length === 0) continue;
       let inserted = 0;
 
-      for (const item of rows) {
-        const keys = Object.keys(item);
-        if (keys.length === 0) continue;
-        const cols = keys.map(k => `"${k}"`).join(', ');
-        const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
-        const updateClauses = keys
-          .filter(k => k !== conflictCol && k !== 'created_at')
-          .map(k => `"${k}" = EXCLUDED."${k}"`)
-          .join(', ');
+      if (table === 'events') {
+        // Clear events and insert clean history
+        await client.query('TRUNCATE table public.events RESTART IDENTITY CASCADE');
+        for (const item of rows) {
+          const keys = Object.keys(item).filter(k => k !== 'id');
+          if (keys.length === 0) continue;
+          const cols = keys.map(k => `"${k}"`).join(', ');
+          const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+          const sql = `INSERT INTO "events" (${cols}) VALUES (${placeholders})`;
+          await client.query(sql, keys.map(k => item[k]));
+          inserted++;
+        }
+      } else {
+        const conflictCol = table === 'sync_state' ? 'key' : 'id';
+        for (const item of rows) {
+          const keys = Object.keys(item);
+          if (keys.length === 0) continue;
+          const cols = keys.map(k => `"${k}"`).join(', ');
+          const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+          const updateClauses = keys
+            .filter(k => k !== conflictCol && k !== 'created_at')
+            .map(k => `"${k}" = EXCLUDED."${k}"`)
+            .join(', ');
 
-        const sql = `
-          INSERT INTO "${table}" (${cols})
-          VALUES (${placeholders})
-          ON CONFLICT ("${conflictCol}")
-          DO UPDATE SET ${updateClauses.length > 0 ? updateClauses : `"${conflictCol}" = EXCLUDED."${conflictCol}"`}
-        `;
-        await client.query(sql, Object.values(item));
-        inserted++;
+          const sql = `
+            INSERT INTO "${table}" (${cols})
+            VALUES (${placeholders})
+            ON CONFLICT ("${conflictCol}")
+            DO UPDATE SET ${updateClauses.length > 0 ? updateClauses : `"${conflictCol}" = EXCLUDED."${conflictCol}"`}
+          `;
+          await client.query(sql, Object.values(item));
+          inserted++;
+        }
       }
       console.log(`  ✓ ${table}: ${inserted} rows migrated`);
     }

@@ -1,5 +1,5 @@
--- CRaMer CRM Architecture Schema for PostgreSQL
--- Accounts, Contacts/Leads, Deals, Messages, Threads, Events, Meetings, Tasks, Notifications, Sync
+-- CRaMer Salesforce-style CRM Architecture Schema for PostgreSQL
+-- Standard Objects: Accounts, Contacts/Leads, Opportunities (Deals), Activities (Emails, LinkedIn, Tasks, Events)
 
 -- 1. Accounts (Organizations / Companies)
 create table if not exists public.accounts (
@@ -78,7 +78,7 @@ create table if not exists public.messages (
   created_at timestamptz not null default now()
 );
 
--- 5. Thread Messages (Full Email Thread History)
+-- 5. Thread Messages (Full Gmail / Email Thread History)
 create table if not exists public.thread_messages (
   id text primary key,
   thread_id text not null,
@@ -98,50 +98,53 @@ create table if not exists public.thread_messages (
 
 -- 6. Events / Activities (Timeline history: email sends, linkedin interactions, notes)
 create table if not exists public.events (
-  id text primary key,
+  id bigserial primary key,
   contact_id text not null references public.contacts(id) on delete cascade,
-  channel text not null check (channel in ('email','linkedin','note','calendar')),
-  kind text not null,
-  date text not null,
-  summary text not null,
-  meta jsonb,
+  channel text check (channel in ('email','linkedin','meeting','call','note')),
+  kind text,
+  date text,
+  summary text,
+  source_file text,
   created_at timestamptz not null default now()
 );
 
--- 7. Calendar Meetings
+-- 7. Calendar Meetings (Salesforce Events)
 create table if not exists public.meetings (
   id text primary key,
-  contact_ids text[] not null default '{}',
   title text not null,
-  start_at timestamptz not null,
-  end_at timestamptz not null,
-  status text not null default 'confirmed' check (status in ('confirmed','tentative','cancelled')),
-  meeting_url text,
+  start_at text not null,
+  end_at text not null,
+  external_attendees text[],
+  contact_ids text[],
+  url text,
+  meet_link text,
+  calendar text,
   description text,
-  location text,
-  organizer text,
-  attendees jsonb,
-  is_follow_up boolean not null default false,
-  source text default 'google_calendar',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  created_at timestamptz not null default now()
 );
 
--- 8. Queue Items (Tasks / Action Items)
+-- 8. Queue Items (Tasks / To-Dos / Follow-ups)
 create table if not exists public.queue_items (
   id text primary key,
   contact_id text not null references public.contacts(id) on delete cascade,
-  kind text not null,
-  title text not null,
+  deal_id text references public.deals(id) on delete set null,
+  type text check (type in ('ask','commitment_by_me','commitment_by_them','record_fact','followup','call','meeting')),
   summary text,
-  status text not null default 'Open' check (status in ('Open','Drafted','Waiting','Blocked','Closed','Unknown')),
-  priority text default 'Normal' check (priority in ('Low','Normal','High','Urgent')),
+  quote text,
+  source text,
+  source_link text,
+  source_timestamp text,
+  owner text,
   due_date date,
-  created_at timestamptz not null default now(),
+  status text not null check (status in ('Open','Drafted','Waiting','Blocked','Closed','Unknown')),
+  closure_action text,
+  draft_id text,
+  last_checked_at text,
+  sources jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
--- 9. Audit Log / Edits
+-- 9. Edits (Salesforce Audit History Tracking)
 create table if not exists public.edits (
   id bigserial primary key,
   entity text not null check (entity in ('deal','contact','queue_item','message','notification','account')),
@@ -168,15 +171,15 @@ create table if not exists public.notifications (
 create table if not exists public.sync_state (
   key text primary key,
   last_synced_at text,
-  info jsonb
+  info jsonb,
+  updated_at timestamptz default now()
 );
 
--- Performance Indexes
+-- Indexes for performance
 create index if not exists idx_contacts_account on public.contacts(account_id);
 create index if not exists idx_deals_contact on public.deals(contact_id);
 create index if not exists idx_messages_contact on public.messages(contact_id);
-create index if not exists idx_messages_thread on public.messages(thread_id);
-create index if not exists idx_thread_messages_thread on public.thread_messages(thread_id);
+create index if not exists idx_thread_messages_contact on public.thread_messages using gin (contact_ids);
 create index if not exists idx_events_contact on public.events(contact_id);
 create index if not exists idx_queue_contact on public.queue_items(contact_id);
 create index if not exists idx_edits_entity on public.edits(entity, entity_id);
