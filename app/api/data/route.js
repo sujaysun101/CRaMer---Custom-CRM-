@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { dbEnabled, selectAll } from '../../../lib/db';
+import { getAuthContextFromRequest } from '../../../lib/auth';
 import {
   isExcludedContact,
   isExcludedMessage,
@@ -230,23 +231,31 @@ function normalizeData(raw) {
   };
 }
 
-export async function GET() {
+export async function GET(req) {
+  const authCtx = await getAuthContextFromRequest(req);
+  const orgId = authCtx?.org_id || 'org_default';
+
   if (dbEnabled()) {
     try {
       const [contacts, deals, events, queue, messages, meetings, sync, notifications] = await Promise.all([
-        selectAll('contacts', 'id,email,name,org,linkedin,status,dnc,source,sentiment,needs_followup,reply_note,next_action,alternate_contact,never_contact'),
-        selectAll('deals', 'id,contact_id,title,stage,value'),
-        selectAll('events', 'contact_id,channel,kind,date,summary,source_file'),
-        selectAll('queue_items'),
-        selectAll('messages', 'id,contact_id,direction,kind,date,subject,snippet,url,thread_id,account,sentiment,needs_followup,note,alternate_contact,ooo_type'),
-        selectAll('meetings', 'id,title,start_at,end_at,external_attendees,contact_ids,url,meet_link,calendar,description'),
-        selectAll('sync_state', 'key,last_synced_at,info', 'key'),
-        selectAll('notifications', 'id,kind,title,body,contact_id,ref,created_at,read_at', 'created_at.desc', 200),
+        selectAll('contacts', 'id,email,name,org,linkedin,status,dnc,source,sentiment,needs_followup,reply_note,next_action,alternate_contact,never_contact', 'id', Infinity, orgId),
+        selectAll('deals', 'id,contact_id,title,stage,value', 'id', Infinity, orgId),
+        selectAll('events', 'contact_id,channel,kind,date,summary,source_file', 'date.asc', Infinity, orgId),
+        selectAll('queue_items', '*', 'id', Infinity, orgId),
+        selectAll('messages', 'id,contact_id,direction,kind,date,subject,snippet,url,thread_id,account,sentiment,needs_followup,note,alternate_contact,ooo_type', 'date.asc', Infinity, orgId),
+        selectAll('meetings', 'id,title,start_at,end_at,external_attendees,contact_ids,url,meet_link,calendar,description', 'start_at.asc', Infinity, orgId),
+        selectAll('sync_state', 'key,last_synced_at,info', 'key', Infinity, orgId),
+        selectAll('notifications', 'id,kind,title,body,contact_id,ref,created_at,read_at', 'created_at.desc', 200, orgId),
       ]);
       const normalized = normalizeData({ contacts, deals, events, queue, messages, meetings, sync, notifications });
-      return Response.json({ source: 'supabase', ...normalized });
+      return Response.json({
+        source: 'postgresql',
+        org: authCtx?.org || { id: 'org_default', name: 'MultiDomain Systems' },
+        user: authCtx?.user || { id: 'u_default', name: 'Sujay Sundar' },
+        ...normalized,
+      });
     } catch (e) {
-      console.error('Supabase read failed:', e.message);
+      console.error('Database read failed:', e.message);
       return Response.json({ error: 'database read failed: ' + e.message }, { status: 502 });
     }
   }
