@@ -241,6 +241,7 @@ export default function Home() {
           </div>
         </div>
         <nav>
+          <a href="/partners" className="nav" style={{textDecoration: "none"}}>◫ <span>Partner workspace</span></a>
           {NAV.map(([k, l, ic]) => (
             <button key={k} className={'nav' + (view === k ? ' on' : '')} onClick={() => setView(k)}>
               <I n={ic} />
